@@ -124,11 +124,13 @@ def extract_text_response(agent_output: dict) -> str:
     return str(agent_output)
 
 
-formatted_agent_chain = (
-    RunnableLambda(format_for_agent)
-    | agent
-    | RunnableLambda(extract_text_response)
-).with_types(input_type=AgentInput, output_type=str)
+async def run_agent(user_input) -> str:
+    formatted = format_for_agent(user_input)
+    result = await agent.ainvoke(formatted)
+    return extract_text_response(result)
+
+
+formatted_agent_chain = RunnableLambda(run_agent).with_types(input_type=AgentInput, output_type=str)
 
 # --- 3. FastAPI App ---
 app = FastAPI(title="Personal Finance Assistant API")
