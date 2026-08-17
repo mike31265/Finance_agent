@@ -77,7 +77,7 @@ tools = [calculate_emi, budget_split, savings_goal_timeline, convert_currency]
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 llm_flash = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
+    model="gemini-3.6-flash",
     api_key=GOOGLE_API_KEY,
     temperature=0
 )
