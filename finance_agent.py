@@ -1,13 +1,12 @@
 import os
 import uvicorn
 from fastapi import FastAPI
-from langserve import add_routes
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 import requests
-from pydantic import BaseModel, Field
-from langchain_core.runnables import RunnableLambda
 
 # --- 1. Define Tools ---
 @tool
@@ -76,14 +75,14 @@ tools = [calculate_emi, budget_split, savings_goal_timeline, convert_currency]
 # --- 2. Initialize Model & Agent ---
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-llm_flash = ChatGoogleGenerativeAI(
+llm = ChatGoogleGenerativeAI(
     model="gemini-3.6-flash",
     api_key=GOOGLE_API_KEY,
     temperature=0
 )
 
 agent = create_react_agent(
-    model=llm_flash,
+    model=llm,
     tools=tools,
     prompt=(
         "You are a friendly, broadly helpful personal finance assistant. "
@@ -95,52 +94,44 @@ agent = create_react_agent(
     )
 )
 
-# --- Adapt Agent Outputs for LangServe Chat ---
-class AgentInput(BaseModel):
-    input: str = Field(description="Your message to the agent")
-
-
-def format_for_agent(x) -> dict:
-    user_input = x["input"] if isinstance(x, dict) else x.input
-    return {"messages": [("user", user_input)]}
-
 
 def extract_text_response(agent_output: dict) -> str:
-    if not isinstance(agent_output, dict):
-        return str(agent_output)
-
-    messages = agent_output.get("messages")
-
-    if messages is None:
-        for value in agent_output.values():
-            if isinstance(value, dict) and "messages" in value:
-                messages = value["messages"]
-                break
-
-    if messages:
-        last = messages[-1]
-        return getattr(last, "content", str(last))
-
-    return str(agent_output)
+    messages = agent_output.get("messages", [])
+    if not messages:
+        return "No response generated."
+    last = messages[-1]
+    content = getattr(last, "content", None)
+    if isinstance(content, str) and content.strip():
+        return content
+    return str(content) if content else "No response generated."
 
 
-async def run_agent(user_input) -> str:
-    formatted = format_for_agent(user_input)
-    result = await agent.ainvoke(formatted)
-    return extract_text_response(result)
-
-
-formatted_agent_chain = RunnableLambda(run_agent).with_types(input_type=AgentInput, output_type=str)
-
-# --- 3. FastAPI App ---
+# --- 3. Plain FastAPI App (no LangServe) ---
 app = FastAPI(title="Personal Finance Assistant API")
 
-add_routes(
-    app,
-    formatted_agent_chain,
-    path="/agent",
-    playground_type="default"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+
+class ChatRequest(BaseModel):
+    input: str
+
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "Finance agent is running. POST to /chat with {'input': 'your question'}"}
+
+
+@app.post("/chat")
+async def chat(request: ChatRequest):
+    result = await agent.ainvoke({"messages": [("user", request.input)]})
+    answer = extract_text_response(result)
+    return {"response": answer}
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
